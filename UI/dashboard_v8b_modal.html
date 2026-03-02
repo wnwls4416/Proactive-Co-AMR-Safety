@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Monitoring (4CAM + DB) v8b - Modal</title>
+
+  <!--
+    fix8b 수정사항:
+    - 웹캠 화면 크기 원상태 복구 (더 크게)
+    - 웹캠에 격자(섹션) 표시 추가
+    - AMR 화면은 상단 정보 완전 제거 (바운딩 박스만 표시)
+    - DB 표는 좌우 분리 유지
+    - 영상 클릭 시 확대 보기 (모달 팝업) 기능 추가
+  -->
+
+  <style>
+    :root{
+      --gap: 10px;
+      --border: #ddd;
+      --muted: #666;
+      --pad: 10px;
+      --radius: 12px;
+      --topH: 70px;     /* 상단 정보 영역 높이 */
+      --tableH: 25vh;   /* DB 표 영역 높이 (증가: 20vh → 25vh) */
+    }
+
+    html, body{
+      margin: 0;
+      padding: 0;
+    }
+
+    body{
+      font-family: Arial, sans-serif;
+      padding: 12px;
+      box-sizing: border-box;
+      background: #f5f5f5;
+      /* overflow: hidden 제거 - 페이지 스크롤 가능 */
+    }
+
+    /* 전체 레이아웃: 자동 높이로 변경 */
+    .page{
+      display: grid;
+      grid-template-rows: auto auto auto; /* 모두 자동 높이 */
+      gap: var(--gap);
+    }
+
+    .top{
+      min-height: var(--topH);
+      background: #fff;
+      padding: 10px 15px;
+      border-radius: var(--radius);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+
+    h2{
+      margin: 0 0 8px 0;
+      font-size: 22px;
+      color: #333;
+    }
+
+    .small{
+      font-size: 13px;
+      color: #666;
+      line-height: 1.5;
+    }
+
+    code{
+      background:#e8f4f8;
+      padding:2px 6px;
+      border-radius:4px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+
+    /* 2x2 영상 그리드(항상 2열 고정) */
+    .grid{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--gap);
+      min-height: 0; /* 내부 overflow 계산을 위해 필요 */
+    }
+
+    .card{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--pad);
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      background: #fff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+
+    /* 웹캠 카드: 상단 정보 표시 */
+    .webcam-card .row{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-bottom: 8px;
+      flex: 0 0 auto;
+    }
+
+    /* AMR 카드: 상단 정보 완전 제거 */
+    .amr-card .row{
+      display: none;
+    }
+
+    .card-title{
+      font-weight: bold;
+      font-size: 15px;
+      color: #333;
+    }
+
+    .tag{
+      font-size:11px;
+      padding:3px 8px;
+      border-radius:999px;
+      background:#e0e0e0;
+      white-space: nowrap;
+      color: #555;
+    }
+
+    .ok{ 
+      background:#c8e6c9; 
+      color: #2e7d32;
+    }
+    
+    .bad{ 
+      background:#ffcdd2; 
+      color: #c62828;
+    }
+
+    /* 카드 안의 영상 영역: 적절한 고정 높이 */
+    .videoBox{
+      height: 400px; /* 고정 높이 (영상 크기에 맞게 조정 가능) */
+      border-radius: 8px;
+      background: #000;
+      overflow: hidden;
+      position: relative; /* 격자 오버레이를 위한 position */
+      cursor: pointer; /* 클릭 가능함을 표시 */
+      transition: opacity 0.2s;
+    }
+
+    .videoBox:hover{
+      opacity: 0.9;
+    }
+
+    .videoBox img{
+      width: 100%;
+      height: 100%;
+      object-fit: cover; /* 화면 꽉 채우기 - 검은 여백 없음 */
+      display: block;
+    }
+
+    /* 웹캠 격자 오버레이 */
+    .grid-overlay{
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none; /* 클릭 방해 안 함 */
+      z-index: 10;
+    }
+
+    .grid-overlay svg{
+      width: 100%;
+      height: 100%;
+    }
+
+    .desc{
+      margin-top: 8px;
+      font-size: 12px;
+      color: #666;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 0 0 auto;
+    }
+
+    /* AMR 카드는 하단 설명도 숨김 */
+    .amr-card .desc{
+      display: none;
+    }
+
+    /* 아래 DB 요약표 영역 */
+    .bottom{
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--pad);
+      box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      background: #fff;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+
+    .bottomTop{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap: 10px;
+      flex: 0 0 auto;
+      margin-bottom: 8px;
+    }
+
+    h3{
+      margin: 0;
+      font-size: 16px;
+      color: #333;
+    }
+
+    .btn{
+      display:inline-block;
+      padding:6px 12px;
+      border:1px solid #999;
+      border-radius:6px;
+      text-decoration:none;
+      color:#333;
+      background: #fff;
+      font-size: 12px;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+
+    .btn:hover{
+      background: #f0f0f0;
+      border-color: #666;
+    }
+
+    table{
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 11px; /* 폰트 크기 축소 */
+    }
+
+    th, td{
+      border: 1px solid #ddd;
+      padding: 4px 6px; /* 패딩 축소 */
+      text-align: left;
+      white-space: nowrap; /* 텍스트 줄바꿈 방지 */
+    }
+
+    th{
+      background:#f8f8f8;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      font-weight: 600;
+      color: #555;
+      font-size: 11px;
+    }
+
+    /* 표 본문만 내부 스크롤 */
+    .tableWrap{
+      flex: 1 1 auto;
+      overflow: auto;
+      min-height: 0;
+    }
+
+    .muted{
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    /* 좌우 분리 테이블 컨테이너 */
+    .split-tables{
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: var(--gap);
+    }
+
+    .table-section{
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 8px;
+      background: #fafafa;
+    }
+
+    .table-section h4{
+      margin: 0 0 6px 0;
+      font-size: 14px;
+      font-weight: bold;
+      color: #444;
+    }
+
+    .table-section .tableWrap{
+      max-height: 300px; /* 최대 높이 제한 */
+      overflow: auto;
+      background: #fff;
+      border-radius: 4px;
+    }
+
+    /* ========================================
+       모달 스타일 (영상 확대 보기)
+       ======================================== */
+    .modal{
+      display: none; /* 기본적으로 숨김 */
+      position: fixed;
+      z-index: 9999;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.85);
+      animation: fadeIn 0.3s;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    .modal-content{
+      position: relative;
+      margin: auto;
+      padding: 20px;
+      width: 90%;
+      max-width: 1200px;
+      height: 90vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-header{
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 15px;
+    }
+
+    .modal-title{
+      color: #fff;
+      font-size: 20px;
+      font-weight: bold;
+    }
+
+    .close{
+      color: #fff;
+      font-size: 36px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: color 0.2s;
+      background: rgba(255,255,255,0.1);
+      border: none;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+
+    .close:hover,
+    .close:focus {
+      color: #ff6b6b;
+      background: rgba(255,255,255,0.2);
+    }
+
+    .modal-video-container{
+      flex: 1;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .modal-video-container img{
+      width: 100%; /* 가로 꽉 채우기 */
+      height: 100%; /* 세로 꽉 채우기 */
+      object-fit: cover; /* 여백 없이 꽉 채우기 */
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+
+    /* 모달 내 격자 오버레이 */
+    .modal-grid-overlay{
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .modal-grid-overlay svg{
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="page">
+    <div class="top">
+      <h2>🎥 Monitoring (4CAM + DB) v8b</h2>
+      <div class="small">
+        - 영상: <b>WEB1</b>, <b>WEB2</b> (섹션 인식용 + 격자 표시) / <b>AMR1</b>, <b>AMR2</b> (객체 감지용) | <b>💡 영상 클릭 → 확대 보기</b><br/>
+        - 데이터: <code>/api/db_status</code> | 폴링: <span id="pollSec">-</span>s | 서버시간: <span id="serverTime">-</span><br/>
+        - 섹션 매핑: <b>AMR1 ← WEB1</b>, <b>AMR2 ← WEB2</b>
+      </div>
+    </div>
+
+    <div class="grid">
+      <!-- 웹캠1: 격자 표시 있음 -->
+      <div class="card webcam-card">
+        <div class="row">
+          <div class="card-title">🌐 WEB1 <span class="tag">cam_id=1</span></div>
+          <div id="st_web1" class="tag">영상</div>
+        </div>
+        <div class="videoBox" onclick="openModal('web1', 'WEB1 (섹션 인식용)', true)">
+          <img src="/video/web1" />
+          <!-- 4x4 격자 오버레이 -->
+          <div class="grid-overlay">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+              <!-- 세로선 -->
+              <line x1="25" y1="0" x2="25" y2="100" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="50" y1="0" x2="50" y2="100" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="75" y1="0" x2="75" y2="100" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <!-- 가로선 -->
+              <line x1="0" y1="25" x2="100" y2="25" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="0" y1="50" x2="100" y2="50" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="0" y1="75" x2="100" y2="75" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              
+              <!-- 섹션 번호 표시 (4x4 = 16개) -->
+              <text x="12.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">1</text>
+              <text x="37.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">2</text>
+              <text x="62.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">3</text>
+              <text x="87.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">4</text>
+              <text x="12.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">5</text>
+              <text x="37.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">6</text>
+              <text x="62.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">7</text>
+              <text x="87.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">8</text>
+              <text x="12.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">9</text>
+              <text x="37.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">10</text>
+              <text x="62.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">11</text>
+              <text x="87.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">12</text>
+              <text x="12.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">13</text>
+              <text x="37.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">14</text>
+              <text x="62.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">15</text>
+              <text x="87.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">16</text>
+            </svg>
+          </div>
+        </div>
+        <div class="desc" id="desc_web1">섹션 인식용 웹캠 (클릭하여 확대)</div>
+      </div>
+
+      <!-- 웹캠2: 격자 표시 있음 -->
+      <div class="card webcam-card">
+        <div class="row">
+          <div class="card-title">🌐 WEB2 <span class="tag">cam_id=2</span></div>
+          <div id="st_web2" class="tag">영상</div>
+        </div>
+        <div class="videoBox" onclick="openModal('web2', 'WEB2 (섹션 인식용)', true)">
+          <img src="/video/web2" />
+          <!-- 4x4 격자 오버레이 -->
+          <div class="grid-overlay">
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+              <line x1="25" y1="0" x2="25" y2="100" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="50" y1="0" x2="50" y2="100" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="75" y1="0" x2="75" y2="100" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="0" y1="25" x2="100" y2="25" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="0" y1="50" x2="100" y2="50" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              <line x1="0" y1="75" x2="100" y2="75" stroke="#00ff00" stroke-width="0.3" opacity="0.6"/>
+              
+              <text x="12.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">1</text>
+              <text x="37.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">2</text>
+              <text x="62.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">3</text>
+              <text x="87.5" y="15" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">4</text>
+              <text x="12.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">5</text>
+              <text x="37.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">6</text>
+              <text x="62.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">7</text>
+              <text x="87.5" y="40" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">8</text>
+              <text x="12.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">9</text>
+              <text x="37.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">10</text>
+              <text x="62.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">11</text>
+              <text x="87.5" y="65" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">12</text>
+              <text x="12.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">13</text>
+              <text x="37.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">14</text>
+              <text x="62.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">15</text>
+              <text x="87.5" y="90" fill="#00ff00" font-size="4" text-anchor="middle" opacity="0.8">16</text>
+            </svg>
+          </div>
+        </div>
+        <div class="desc" id="desc_web2">섹션 인식용 웹캠 (클릭하여 확대)</div>
+      </div>
+
+      <!-- AMR1: 상단/하단 정보 없음, 영상만 -->
+      <div class="card amr-card">
+        <div class="row">
+          <div><b>AMR1</b> <span class="tag">cam_id=3</span></div>
+        </div>
+        <div class="videoBox" onclick="openModal('amr1', 'AMR1 (Robot5 - 객체 감지)', false)">
+          <img src="/video/amr1" />
+        </div>
+        <div class="desc" id="desc_amr1">-</div>
+      </div>
+
+      <!-- AMR2: 상단/하단 정보 없음, 영상만 -->
+      <div class="card amr-card">
+        <div class="row">
+          <div><b>AMR2</b> <span class="tag">cam_id=4</span></div>
+        </div>
+        <div class="videoBox" onclick="openModal('amr2', 'AMR2 (Robot4 - 객체 감지)', false)">
+          <img src="/video/amr2" />
+        </div>
+        <div class="desc" id="desc_amr2">-</div>
+      </div>
+    </div>
+
+    <div class="bottom">
+      <div class="bottomTop">
+        <div>
+          <h3>📊 DB 요약 (AMR 감지 이벤트 최신 1개씩)</h3>
+          <div class="muted">각 로봇별로 좌우 분리 표시. 표 안에서만 스크롤됩니다.</div>
+        </div>
+        <a class="btn" href="/events" target="_blank">전체 목록 보기</a>
+      </div>
+
+      <div class="split-tables">
+        <!-- 왼쪽: AMR1 -->
+        <div class="table-section">
+          <h4>🤖 AMR1 (Robot5)</h4>
+          <div class="tableWrap">
+            <table id="amr1Table">
+              <thead>
+                <tr>
+                  <th>객체 이름</th>
+                  <th>Section</th>
+                  <th>감지 시각</th>
+                  <th>경과(s)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 오른쪽: AMR2 -->
+        <div class="table-section">
+          <h4>🤖 AMR2 (Robot4)</h4>
+          <div class="tableWrap">
+            <table id="amr2Table">
+              <thead>
+                <tr>
+                  <th>객체 이름</th>
+                  <th>Section</th>
+                  <th>감지 시각</th>
+                  <th>경과(s)</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="muted" style="margin-top:8px;">
+        WEB1 현재 섹션: <b id="ws1" style="color:#1976d2;">-</b> (경과=<span id="ws1a">-</span>s) |
+        WEB2 현재 섹션: <b id="ws2" style="color:#1976d2;">-</b> (경과=<span id="ws2a">-</span>s)
+      </div>
+    </div>
+  </div>
+
+  <!-- 모달 (영상 확대 보기) -->
+  <div id="videoModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div class="modal-title" id="modalTitle">영상 확대</div>
+        <button class="close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-video-container" id="modalVideoContainer">
+        <img id="modalVideo" src="" />
+        <div class="modal-grid-overlay" id="modalGridOverlay" style="display:none;">
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+            <line x1="25" y1="0" x2="25" y2="100" stroke="#00ff00" stroke-width="0.2" opacity="0.7"/>
+            <line x1="50" y1="0" x2="50" y2="100" stroke="#00ff00" stroke-width="0.2" opacity="0.7"/>
+            <line x1="75" y1="0" x2="75" y2="100" stroke="#00ff00" stroke-width="0.2" opacity="0.7"/>
+            <line x1="0" y1="25" x2="100" y2="25" stroke="#00ff00" stroke-width="0.2" opacity="0.7"/>
+            <line x1="0" y1="50" x2="100" y2="50" stroke="#00ff00" stroke-width="0.2" opacity="0.7"/>
+            <line x1="0" y1="75" x2="100" y2="75" stroke="#00ff00" stroke-width="0.2" opacity="0.7"/>
+            
+            <text x="12.5" y="15" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">1</text>
+            <text x="37.5" y="15" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">2</text>
+            <text x="62.5" y="15" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">3</text>
+            <text x="87.5" y="15" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">4</text>
+            <text x="12.5" y="40" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">5</text>
+            <text x="37.5" y="40" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">6</text>
+            <text x="62.5" y="40" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">7</text>
+            <text x="87.5" y="40" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">8</text>
+            <text x="12.5" y="65" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">9</text>
+            <text x="37.5" y="65" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">10</text>
+            <text x="62.5" y="65" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">11</text>
+            <text x="87.5" y="65" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">12</text>
+            <text x="12.5" y="90" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">13</text>
+            <text x="37.5" y="90" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">14</text>
+            <text x="62.5" y="90" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">15</text>
+            <text x="87.5" y="90" fill="#00ff00" font-size="3" text-anchor="middle" opacity="0.9">16</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const POLL_SEC = {{ poll_sec | safe }};
+  document.getElementById("pollSec").innerText = POLL_SEC;
+
+  // 각 로봇별 테이블에 데이터 표시
+  function renderAmrTable(tableId, item){
+    const tbody = document.querySelector(`#${tableId} tbody`);
+    tbody.innerHTML = "";
+
+    if(!item || item.object_id === null || item.object_id === undefined){
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.textContent = "감지된 이벤트가 없습니다.";
+      td.style.textAlign = "center";
+      td.style.color = "#999";
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const tr = document.createElement("tr");
+    const name = item.object_name || "-";
+    const sec = item.section_id != null ? item.section_id : "-";
+    const ts = item.detected_at || "-";
+    const age = (item.age_sec != null) ? item.age_sec.toFixed(1) : "-";
+    
+    [name, sec, ts, age].forEach(val => {
+      const td = document.createElement("td");
+      td.textContent = String(val);
+      tr.appendChild(td);
+    });
+    
+    tbody.appendChild(tr);
+  }
+
+  // 데이터 갱신 함수
+  async function refreshAll(){
+    try {
+      const res = await fetch("/api/db_status?ts=" + Date.now());
+      const data = await res.json();
+
+      document.getElementById("serverTime").innerText = (data.server_time || "-");
+
+      // AMR1, AMR2 각각의 테이블에 표시
+      renderAmrTable("amr1Table", data.cams["3"]);
+      renderAmrTable("amr2Table", data.cams["4"]);
+
+      // 웹캠 섹션 정보 표시
+      const w1 = data.cams["web1_section"] || {};
+      const w2 = data.cams["web2_section"] || {};
+      document.getElementById("ws1").innerText = w1.section_id ?? "-";
+      document.getElementById("ws1a").innerText = (w1.age_sec != null) ? w1.age_sec.toFixed(1) : "-";
+      document.getElementById("ws2").innerText = w2.section_id ?? "-";
+      document.getElementById("ws2a").innerText = (w2.age_sec != null) ? w2.age_sec.toFixed(1) : "-";
+    } catch(e) {
+      console.error("데이터 로딩 실패:", e);
+    }
+  }
+
+  // 모달 열기 함수
+  function openModal(videoName, title, showGrid) {
+    const modal = document.getElementById('videoModal');
+    const modalVideo = document.getElementById('modalVideo');
+    const modalTitle = document.getElementById('modalTitle');
+    const modalGridOverlay = document.getElementById('modalGridOverlay');
+    
+    modalVideo.src = '/video/' + videoName;
+    modalTitle.textContent = title;
+    
+    // 모달에서는 격자를 표시하지 않음 (영상 비율과 안 맞는 문제)
+    // 작은 화면에서 격자로 섹션 확인, 확대 시에는 영상 자체를 자세히 보는 용도
+    modalGridOverlay.style.display = 'none';
+    
+    modal.style.display = 'block';
+  }
+
+  // 모달 닫기 함수
+  function closeModal() {
+    const modal = document.getElementById('videoModal');
+    modal.style.display = 'none';
+  }
+
+  // 모달 외부 클릭 시 닫기
+  window.onclick = function(event) {
+    const modal = document.getElementById('videoModal');
+    if (event.target == modal) {
+      closeModal();
+    }
+  }
+
+  // ESC 키로 모달 닫기
+  document.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      closeModal();
+    }
+  });
+
+  // 초기 실행 및 주기적 갱신
+  refreshAll();
+  setInterval(refreshAll, Math.max(0.1, POLL_SEC) * 1000);
+</script>
+</body>
+</html>
